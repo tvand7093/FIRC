@@ -3,10 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Web.Http;
 
 namespace SyntaxTester.Controllers.API
 {
-    class _BaseApiController : ApiController
+    public class _BaseApiController : ApiController
     {
     }
 }

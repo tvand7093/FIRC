@@ -6,7 +6,9 @@ using System.Threading.Tasks;
 
 namespace SyntaxTester.Controllers.API
 {
-    class TestApiController : _BaseApiController
+    public interface ITest { int Id { get; } }
+    public class TestApiController : _BaseApiController, ITest
     {
+        public int Id { get; }
     }
 }

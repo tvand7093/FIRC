@@ -18,8 +18,6 @@ namespace ForceInheritance
     [ExportCodeFixProvider(LanguageNames.CSharp, Name = nameof(ForceInheritanceCodeFixProvider)), Shared]
     public class ForceInheritanceCodeFixProvider : CodeFixProvider
     {
-        private const string title = "Make uppercase";
-
         public sealed override ImmutableArray<string> FixableDiagnosticIds
         {
             get { return ImmutableArray.Create(ForceInheritanceAnalyzer.DiagnosticId); }
@@ -32,42 +30,128 @@ namespace ForceInheritance
         }
 
         public sealed override async Task RegisterCodeFixesAsync(CodeFixContext context)
-        {
-            var root = await context.Document.GetSyntaxRootAsync(context.CancellationToken).ConfigureAwait(false);
+        {           
+            //get all documents in same folder as the current source
+            var potentialSuggestions = context.Document.Project.Documents
+                .Where(d => d.Folders == context.Document.Folders);
 
-            // TODO: Replace the following code with your own analysis, generating a CodeAction for each fix to suggest
-            var diagnostic = context.Diagnostics.First();
+            //loop over documents and look for appropriate base classes to use
+            foreach (var suggestion in potentialSuggestions)
+            {
+                //get the tree for each class file
+                var tree = await suggestion.GetSyntaxRootAsync(context.CancellationToken);
+
+                //search the tree for each file for a class that begins with _base in the class name.
+                var declerations = from n in tree.DescendantNodes()
+                                   where n.IsKind(SyntaxKind.ClassDeclaration)
+                                   where (n as ClassDeclarationSyntax).Identifier
+                                        .ValueText.ToLower().StartsWith("_base")
+                                   select n as ClassDeclarationSyntax;
+
+                //for every _base type class, add a suggestion.
+                foreach (var decleration in declerations)
+                {
+                    var className = decleration.Identifier.ValueText;
+                    var title = $"Inherit from {className}";
+                    // Register a code action that will invoke the fix.
+                    context.RegisterCodeFix(
+                        CodeAction.Create(
+                            title: title,
+                            createChangedDocument: c => ConvertToBaseController(
+                                context.Document, context.Diagnostics, className, c),
+                            equivalenceKey: title),
+                        context.Diagnostics.First());
+                }
+                
+            }
+
+        }
+
+        /// <summary>
+        /// Generates the new class decleration for replacing an old parent class
+        /// </summary>
+        /// <param name="toReplace">The original decleration to be replaced.</param>
+        /// <param name="newParentClass">The name of the class to replace the existing parent with.</param>
+        /// <returns>The new decleration for adding into a syntax tree.</returns>
+        private ClassDeclarationSyntax CreateNewClassDecleration(ClassDeclarationSyntax toReplace, string newParentClass)
+        {
+            //create the new class type to be the parent based on the passed in name.
+            var identifier = SyntaxFactory.IdentifierName(newParentClass);
+            var simpleBaseType = SyntaxFactory.SimpleBaseType(identifier);
+
+            // Get the symbol representing the type to be renamed.
+            var toRemove = toReplace.BaseList?.Types.FirstOrDefault(t => t.IsKind(SyntaxKind.SimpleBaseType));
+
+            if(toRemove == null)
+            {
+                //insert new parent class
+                //create new base list
+                var newBaseList = SyntaxFactory.BaseList();
+                
+                //add the new parent to the base list
+                var updated = newBaseList.Types.Add(simpleBaseType);
+
+                //update the types to the final list
+                var finalBaseList = newBaseList.WithoutLeadingTrivia().WithTypes(updated);
+
+                //add whitespace before colon
+                var preSpace = SyntaxFactory.SyntaxTrivia(SyntaxKind.WhitespaceTrivia, " ");
+
+                //append space between class name and colon
+                var newNode = toReplace.ChildTokens().FirstOrDefault(t => t.IsKind(SyntaxKind.IdentifierToken));
+
+                //trickle up the changes
+                return toReplace.ReplaceToken(newNode, newNode.WithTrailingTrivia(preSpace)).WithBaseList(finalBaseList);
+            }
+            else
+            {
+                var preSpace = SyntaxFactory.SyntaxTrivia(SyntaxKind.WhitespaceTrivia, " ");
+
+                //insert new parent class with specified one. 
+                var updated = toReplace.BaseList.Types.Insert(0, simpleBaseType.WithTrailingTrivia(preSpace));
+
+                //trickle up the changes
+                var newList = toReplace.BaseList.WithTypes(updated);
+
+                //return the final class decleration that uses our new class.
+                return toReplace.WithBaseList(newList);
+            }
+        }
+
+        /// <summary>
+        /// Converts an existing class decleration node to use a different base class.
+        /// </summary>
+        /// <param name="document">The original document being modified.</param>
+        /// <param name="diagnostics">The diagnostic records of the request.</param>
+        /// <param name="newClass">The name of the parent class to replace the existing with.</param>
+        /// <param name="cancellationToken">The systems cancellation token.</param>
+        /// <returns></returns>
+        private async Task<Document> ConvertToBaseController(Document document,
+            ImmutableArray<Diagnostic> diagnostics,
+            string newClass,
+            CancellationToken cancellationToken)
+        {
+            //get the root of our syntax tree.
+            var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
+
+            //get the first diagnostic message so we know where to start our search
+            var diagnostic = diagnostics.First();
             var diagnosticSpan = diagnostic.Location.SourceSpan;
 
             // Find the type declaration identified by the diagnostic.
-            var declaration = root.FindToken(diagnosticSpan.Start).Parent.AncestorsAndSelf().OfType<TypeDeclarationSyntax>().First();
+            var oldClassDecleration = root.FindToken(diagnosticSpan.Start).Parent
+                .AncestorsAndSelf()
+                .OfType<TypeDeclarationSyntax>()
+                .First() as ClassDeclarationSyntax;
 
-            // Register a code action that will invoke the fix.
-            context.RegisterCodeFix(
-                CodeAction.Create(
-                    title: title,
-                    createChangedSolution: c => MakeUppercaseAsync(context.Document, declaration, c),
-                    equivalenceKey: title),
-                diagnostic);
-        }
+            //create the new class decleration
+            var newClassDecleration = CreateNewClassDecleration(oldClassDecleration, newClass);
 
-        private async Task<Solution> MakeUppercaseAsync(Document document, TypeDeclarationSyntax typeDecl, CancellationToken cancellationToken)
-        {
-            // Compute new uppercase name.
-            var identifierToken = typeDecl.Identifier;
-            var newName = identifierToken.Text.ToUpperInvariant();
-
-            // Get the symbol representing the type to be renamed.
-            var semanticModel = await document.GetSemanticModelAsync(cancellationToken);
-            var typeSymbol = semanticModel.GetDeclaredSymbol(typeDecl, cancellationToken);
-
-            // Produce a new solution that has all references to that type renamed, including the declaration.
-            var originalSolution = document.Project.Solution;
-            var optionSet = originalSolution.Workspace.Options;
-            var newSolution = await Renamer.RenameSymbolAsync(document.Project.Solution, typeSymbol, newName, optionSet, cancellationToken).ConfigureAwait(false);
-
-            // Return the new solution with the now-uppercase type name.
-            return newSolution;
+            //create the new root node of our syntax tree.
+            var newRoot = root.ReplaceNode(oldClassDecleration, newClassDecleration);
+            
+            //replace and commit our change to the document.
+            return document.WithSyntaxRoot(newRoot);
         }
     }
 }
