@@ -15,7 +15,7 @@ copy for safe keeping.
   - All API Controllers **MUST** be inside a `Controllers\API` folder in the web project.
   - All API Controllers **MUST** follow the same naming patter as the regular controllers. The format is *exactly* the same.
 
-### Known limitations
+#### Known limitations
 
 The tool will insert the needed references if they are missing but it will not auto-import the namespace required. This is currently
 due to the way it is built. It hasn't been built for production use, so it is fairly strict where classes go so it will require that
