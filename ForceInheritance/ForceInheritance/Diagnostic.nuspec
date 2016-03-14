@@ -2,8 +2,8 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2011/08/nuspec.xsd">
   <metadata>
     <id>ForceInheritance</id>
-    <version>1.0.0.0</version>
-    <title>ForceInheritance</title>
+    <version>1.0.0.1</version>
+    <title>Force Inheritance</title>
     <authors>Tyler.Vanderhoef</authors>
     <owners>Tyler.Vanderhoef</owners>
     <licenseUrl>http://LICENSE_URL_HERE_OR_DELETE_THIS_LINE</licenseUrl>

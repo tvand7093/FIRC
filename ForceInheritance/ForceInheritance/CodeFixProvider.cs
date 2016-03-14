@@ -12,6 +12,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Rename;
 using Microsoft.CodeAnalysis.Text;
+using System.Text;
 
 namespace ForceInheritance
 {
@@ -29,8 +30,103 @@ namespace ForceInheritance
             return WellKnownFixAllProviders.BatchFixer;
         }
 
+        private string ParseQualifiedNamespace(SyntaxNode toParse)
+        {
+            var beginNamespace = toParse as QualifiedNameSyntax;
+            if (beginNamespace == null)
+            {
+                var node = toParse as IdentifierNameSyntax;
+                //no left, so it is just a namespace like: using System;
+                return node.Identifier.ValueText;
+               // parsed.Add(node.Identifier.ValueText);
+            }
+
+            QualifiedNameSyntax child = beginNamespace;
+            NameSyntax current = null;
+
+            while (child != null)
+            {
+                current = child;
+                child = child.Left as QualifiedNameSyntax;
+            }
+            StringBuilder fullName = new StringBuilder();
+            //found bottom of tree, so grab start ns and parse upwards
+
+            var bottom = current as QualifiedNameSyntax;
+
+            var startOfNamespace = (bottom.Left as IdentifierNameSyntax).Identifier.ValueText;
+            var secondPartOfNamespace = bottom.Right.Identifier.ValueText;
+
+            fullName.Append($"{startOfNamespace}.{secondPartOfNamespace}");
+
+            QualifiedNameSyntax parent = bottom.Parent as QualifiedNameSyntax;
+            //recurse upwards
+            while (parent != null)
+            {
+                //append next section of namespace plus the trivia on left side.
+                fullName.Append($".{parent.Right.Identifier.ValueText}");
+                parent = parent.Parent as QualifiedNameSyntax;
+            }
+            return fullName.ToString();
+        }
+
+        private HashSet<string> ParseNamespaces(IEnumerable<UsingDirectiveSyntax> namespaces)
+        {
+            HashSet<string> parsed = new HashSet<string>();
+
+            foreach (var ns in namespaces)
+            {
+                var fullName = new StringBuilder();
+                var firstNode = ns.ChildNodes().ElementAt(0);
+                //var beginNamespace = firstNode as QualifiedNameSyntax;
+                //if (beginNamespace == null)
+                //{
+                //    var node = firstNode as IdentifierNameSyntax;
+                //    //no left, so it is just a namespace like: using System;
+                //    parsed.Add(node.Identifier.ValueText);
+                //    continue;
+                //}
+
+                //QualifiedNameSyntax child = beginNamespace;
+                //NameSyntax current = null;
+
+                //while (child != null)
+                //{
+                //    child = child.Left as QualifiedNameSyntax;
+                //    current = child;
+                //}
+
+                ////found bottom of tree, so grab start ns and parse upwards
+                //var startOfNamespace = (current as IdentifierNameSyntax).Identifier.ValueText;
+                //fullName.Append(startOfNamespace);
+
+                //QualifiedNameSyntax parent = null;
+                ////recurse upwards
+                //while (parent != null)
+                //{
+                //    //append next section of namespace plus the trivia on left side.
+                //    fullName.Append($".{parent.Right.Identifier.ValueText}");
+                //    parent = parent.Parent as QualifiedNameSyntax;
+                //}
+                parsed.Add(ParseQualifiedNamespace(firstNode));
+                //done parsing, so return insert into hash table.
+                //parsed.Add(fullName.ToString());
+            }
+            return parsed;
+        }
+
         public sealed override async Task RegisterCodeFixesAsync(CodeFixContext context)
-        {           
+        {
+            //get all namespaces to see if the Controller or ApiController classes exist and need to be in here.
+            var documentRoot = await context.Document.GetSyntaxRootAsync(context.CancellationToken);
+            var namespaces = documentRoot.ChildNodes()
+                .Where(n => n.IsKind(SyntaxKind.UsingDirective))
+                .Cast<UsingDirectiveSyntax>();
+
+            var parsedNamespaces = ParseNamespaces(namespaces);
+
+            //documentRoot.na
+
             //get all documents in same folder as the current source
             var potentialSuggestions = context.Document.Project.Documents
                 .Where(d => d.Folders == context.Document.Folders);
@@ -40,12 +136,15 @@ namespace ForceInheritance
             {
                 //get the tree for each class file
                 var tree = await suggestion.GetSyntaxRootAsync(context.CancellationToken);
+                var error = context.Diagnostics.First();
 
                 //search the tree for each file for a class that begins with _base in the class name.
                 var declerations = from n in tree.DescendantNodes()
                                    where n.IsKind(SyntaxKind.ClassDeclaration)
                                    where (n as ClassDeclarationSyntax).Identifier
-                                        .ValueText.ToLower().StartsWith("_base")
+                                        .ValueText.StartsWith("_")
+                                   where (n as ClassDeclarationSyntax).Identifier.SpanStart
+                                        != error.Location.SourceSpan.Start
                                    select n as ClassDeclarationSyntax;
 
                 //for every _base type class, add a suggestion.
@@ -53,12 +152,25 @@ namespace ForceInheritance
                 {
                     var className = decleration.Identifier.ValueText;
                     var title = $"Inherit from {className}";
+                    //get the class namespace
+                    var classNamespace = decleration.FirstAncestorOrSelf<NamespaceDeclarationSyntax>(n => n.IsKind(SyntaxKind.NamespaceDeclaration));
+                    var namespaceName = classNamespace.ChildNodes();
+
+                    var fullyQualifiedNamespace = ParseQualifiedNamespace(namespaceName.ElementAt(0));
+
+
+                    if (parsedNamespaces.Contains(fullyQualifiedNamespace))
+                    {
+                        //set namespace to null. This means it is already imported so we don't need to do anything else.
+                        fullyQualifiedNamespace = null;
+                    }
+
                     // Register a code action that will invoke the fix.
                     context.RegisterCodeFix(
                         CodeAction.Create(
                             title: title,
                             createChangedDocument: c => ConvertToBaseController(
-                                context.Document, context.Diagnostics, className, c),
+                                context.Document, context.Diagnostics, fullyQualifiedNamespace, className, c),
                             equivalenceKey: title),
                         context.Diagnostics.First());
                 }
@@ -118,6 +230,42 @@ namespace ForceInheritance
             }
         }
 
+        private CompilationUnitSyntax CreateNewUsingStatement(CompilationUnitSyntax root, string toInsert)
+        {
+
+            var sections = toInsert.Split('.');
+            QualifiedNameSyntax toAttach = null;
+
+            if (sections.Length == 1)
+            {
+                //only insert identifier name
+                return root.AddUsings(SyntaxFactory.UsingDirective(SyntaxFactory.IdentifierName(toInsert)));
+            }
+
+            for (int i = 0; i < sections.Length; i++)
+            {
+                
+
+                if(toAttach == null)
+                {
+                    //attach like the folowing: System.Net
+                    toAttach = SyntaxFactory.QualifiedName(
+                        SyntaxFactory.IdentifierName(sections[i]),
+                        SyntaxFactory.IdentifierName(sections[++i]))
+                        ;
+                }
+                else
+                {
+                    //attach 'toAttach' to an existing node as the left node
+                    toAttach = SyntaxFactory.QualifiedName(
+                        toAttach,
+                        SyntaxFactory.IdentifierName(sections[i])).WithLeadingTrivia(SyntaxFactory.Space);
+                }
+            }
+
+            return root.AddUsings(SyntaxFactory.UsingDirective(toAttach));
+        }
+
         /// <summary>
         /// Converts an existing class decleration node to use a different base class.
         /// </summary>
@@ -128,6 +276,7 @@ namespace ForceInheritance
         /// <returns></returns>
         private async Task<Document> ConvertToBaseController(Document document,
             ImmutableArray<Diagnostic> diagnostics,
+            string fullyQualifiedNamespace,
             string newClass,
             CancellationToken cancellationToken)
         {
@@ -142,16 +291,23 @@ namespace ForceInheritance
             var oldClassDecleration = root.FindToken(diagnosticSpan.Start).Parent
                 .AncestorsAndSelf()
                 .OfType<TypeDeclarationSyntax>()
-                .First() as ClassDeclarationSyntax;
+                .FirstOrDefault() as ClassDeclarationSyntax;
 
             //create the new class decleration
             var newClassDecleration = CreateNewClassDecleration(oldClassDecleration, newClass);
 
             //create the new root node of our syntax tree.
-            var newRoot = root.ReplaceNode(oldClassDecleration, newClassDecleration);
-            
+            root = root.ReplaceNode(oldClassDecleration, newClassDecleration);
+
+            //append using statement if necessary
+            if (!String.IsNullOrEmpty(fullyQualifiedNamespace))
+            {
+                var comp = root as CompilationUnitSyntax;
+                root = CreateNewUsingStatement(comp, fullyQualifiedNamespace);
+            }
+
             //replace and commit our change to the document.
-            return document.WithSyntaxRoot(newRoot);
+            return document.WithSyntaxRoot(root);
         }
     }
 }

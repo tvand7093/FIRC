@@ -63,11 +63,12 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Controllers\API\ApiTest.cs" />
-    <Compile Include="Controllers\API\TestApiController.cs" />
-    <Compile Include="Controllers\API\_BaseApiController.cs" />
+    <Compile Include="Controllers\ApiControllers\ApiTest.cs" />
+    <Compile Include="Controllers\ApiControllers\TestApiController.cs" />
+    <Compile Include="Controllers\ApiControllers\_BaseApiController.cs" />
     <Compile Include="Controllers\TestController.cs" />
     <Compile Include="Controllers\_BaseController.cs" />
+    <Compile Include="Controllers\_TFAController.cs" />
     <Compile Include="NotAController.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

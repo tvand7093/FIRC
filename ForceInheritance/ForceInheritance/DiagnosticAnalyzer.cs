@@ -27,7 +27,7 @@ namespace ForceInheritance
             Category, DiagnosticSeverity.Error,
             isEnabledByDefault: true, description: Description);
 
-        private const string ApiFolder = "api/";
+        private const string ApiFolder = "apicontrollers/";
         private const string ControllersFolder = "controllers/";
         private const string ApiClassName = "apicontroller";
         private const string ControllerClassName = "controller";
@@ -118,14 +118,14 @@ namespace ForceInheritance
 
             //detect the parent class name. Specifically if it starts with _Base or any variation
             //of _BASE. This is forced as a coding standard.
-            var isBase = parentClassName?.StartsWith("_base");
+            var isBase = parentClassName?.StartsWith("_");
             var hasBaseParent = isBase.HasValue ? isBase.Value : false;
 
             Diagnostic diagnostic = null;
             //get the child token 
             var child = node.ChildTokens().FirstOrDefault(t => t.IsKind(SyntaxKind.IdentifierToken));
 
-            if (!hasBaseParent && dir == ControllersFolder && parentClassName != ControllerClassName)
+            if (!hasBaseParent && dir == ControllersFolder)
             {
                 //this is a class that needs a parent class. It resides in the Controllers folder
                 //so we prompt for a regular _BaseController of some type.
@@ -134,7 +134,8 @@ namespace ForceInheritance
                         child.GetLocation(),
                         className, "base");
             }
-            if(!hasBaseParent && dir == ApiFolder && parentClassName != ApiClassName)
+
+            if(!hasBaseParent && dir == ApiFolder)
             {
                 //this is a class that needs a parent class. It resides in the Controllers/API folder
                 //so we prompt for a regular _BaseAPIController of some type.
@@ -143,6 +144,14 @@ namespace ForceInheritance
                         child.GetLocation(),
                         className, "Api base");
             }
+            
+            if((parentClassName == ApiClassName || parentClassName == ControllerClassName)
+                && className.StartsWith("_"))
+            {
+                //means we can allow this, so remove the previous diagnostic
+                diagnostic = null;
+            }
+
 
             //if any issue was detected, prompt now.
             if (diagnostic != null) context.ReportDiagnostic(diagnostic);
